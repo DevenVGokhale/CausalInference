@@ -1,0 +1,622 @@
+---
+title: "Linear generative models"
+author: Deven Gokhale
+format: 
+  html:
+    theme: sketchy
+    code-fold: true
+editor: visual
+---
+
+```{r, setup, warning=FALSE, message=FALSE}
+rm(list = ls())
+
+# additional packages used for bayesian analysis of the model
+library(brms)
+library(bayesplot)
+library(tidybayes)
+library(GGally)
+library(psych)
+library(tidyr)
+library(dplyr)
+
+theme_set(theme_bw())
+# setting up some stan options to make it run faster 
+# Load necessary libraries and set up multi-core processing for Stan
+options(warn=-1, message =-1)
+
+#rstan_options(auto_write = TRUE)
+
+# assign multiple cores to the estimation values 
+#options(mc.cores = detectCores()-4)
+
+
+# extract data from the rethinking pacakge.
+data(Howell1, package = "rethinking")
+
+hd <- Howell1
+
+rm(Howell1)
+
+hd |> describe()
+
+# how do the distibutions of the continuous variables look
+hd |> 
+    select(height, weight) |> 
+    pivot_longer(cols = c(height, weight)) |> 
+    ggplot(aes(x = value))+
+    geom_histogram(bins = 50)+
+    facet_wrap(name~., scales = "free_x")
+
+
+
+hd |> 
+    mutate(adult = ifelse(age >= 18, 'yes', 'no')) |> 
+    ggplot(aes(x = weight, y = height, colour = adult))+
+    geom_point(pch = 21, fill = NA)
+```
+
+When stratified by being adult, the relationship shows a strong linear relationship between height and and weight. For the remainder of this workflow, only I will only be using the adult data since it more applicable to this analysis.
+
+### Linear regression
+
+The main aim of this portion is to introduce a simple linear regression model and run it using the `brms` package. I will then proceed to extract useful summary statistics from the fitted model. Basically trying to get used to the processing and post-processing workflows with these newer packages.
+
+```{r, fitting_linear_model}
+
+# subset the Howell data to include only adults 
+hd_adults <- hd |> filter(age >= 18) 
+
+# a quick plot to visualize the distribution of the height and weights
+hd_adults |> 
+  select(height, weight) |> 
+  pivot_longer(cols = c(height, weight)) |> 
+  ggplot(aes(x = value))+
+  geom_histogram(bins = 50)+
+  facet_wrap(name~., scales = "free_x")
+
+# pretty unimodal once filtering based on age. cool! 
+    
+# a quick plot to look at the relationship between height and weight
+hd_adults |> 
+  ggplot(aes(x = height, y = weight))+
+  geom_point(pch = 21, fill = NA, )
+
+# perfecto! a strong linear relationship exists between height and weight!
+
+
+# summarizing the values for the two variables for adulst 
+hd |> 
+  mutate(adults = ifelse(age >= 18, 'yes', 'no')) |> 
+  select(adults, age, height, weight) |>
+  group_by(adults) |> 
+  summarise_all(
+    .funs = list(Mean = mean, SD = sd, Median = median)
+  ) |> 
+  ungroup()
+
+hd |> 
+  mutate(adults = ifelse(age >= 18, 'yes', 'no')) |> 
+  group_by(adults) |> 
+  tally() |> 
+  ungroup()
+```
+
+Taking a second to first generate a prior probability model for the the height distribution. Assuming the empirical statistics to generate the following formalism. Say the height $h_i \sim N(\mu, \sigma)$ where $\mu \sim U(154, 7)$, and $\sigma \sim U(0, 50)$
+
+```{r, height_prob_model, message=FALSE, warning=FALSE}
+
+set.seed(72)
+
+prior_pred_model_height <- (
+    tibble(
+        mu_draws = rnorm(1e4, mean = 178, sd = 100), 
+        sigma_draws = runif(1e4, 0, 50),
+        ) |> 
+    mutate(
+        height_draws = rnorm(1e4, mean = mu_draws, sd = sigma_draws)
+        )
+)
+
+# plot the prior distribution of height
+
+prior_pred_model_height |> 
+    pivot_longer(cols = mu_draws:height_draws) |> 
+    ggplot(aes(x = value))+
+    geom_histogram(fill=NA, colour = "black")+
+    facet_wrap(.~name, scales = "free")
+```
+
+Now we move forward to using using the `brms` package to calculate the posterior of the normal distribution
+
+```{r estimate_posterior_brms, message=FALSE, warning=FALSE}
+
+
+hd_adults_height <- hd_adults |> select(height) 
+
+height_post <- (
+  hd_adults_height |> 
+    brm(
+      data = _, 
+      # since there is only intercept, this will estimate the average height 
+      formula = height ~ 1, 
+      family = gaussian, 
+      prior = c(
+        prior(normal(178, 28), class = Intercept),
+        prior(cauchy(5, 1), class = sigma)
+      ), 
+      iter = 2000, warmup = 1000, chains = 4, cores = 4, seed = 72, 
+      file = "../fits/height_post"
+  )
+)
+
+# check some prelimnary diagnostics
+plot(height_post) 
+
+# generates a dataframe of poterior samples 
+height_post_df <- (
+  height_post |> 
+    posterior::as_draws_df() 
+    )
+
+height_post_cov <- height_post_df |> select(b_Intercept:sigma) |> cov()
+
+# some ways of summarizing the information of the posterior distribution 
+# 1. These generate the quantiles of the posterior distribution.
+posterior_summary(height_post, probs = c(0.025, 0.11, 0.5, 0.89, 0.975))
+
+# 2. These generate the x% higheset density intervals. defaiult is 95%
+height_post_df |> 
+  pivot_longer(cols = b_Intercept:lp__) |>
+  group_by(name) |> 
+  mean_hdi()
+  
+
+# chain plot
+# the extracted posterior distribution can be used to generate custom diagnotic plots 
+# eg. the chains of the posterior distribution
+height_post_df |> 
+  select(-c(Intercept, lprior, lp__)) |> 
+  pivot_longer(cols = b_Intercept:sigma, names_to = "param_name", 
+               values_to = "param_value") |> 
+  ggplot(aes(x = .iteration, y = param_value, colour = factor(.chain))) +
+  geom_line(size = 0.4)+
+  facet_wrap(.~param_name, scales = "free_y")
+    
+
+# eg. poesterior distribution
+height_post_df |> 
+  select(-c(Intercept, lprior, lp__)) |> 
+  pivot_longer(cols = b_Intercept:sigma, 
+               names_to = "param_name", values_to = "param_value") |> 
+  ggplot(aes(x = param_value)) +
+  geom_histogram(bins = 50, fill = NA, colour = "black")+
+  facet_wrap(.~param_name, scales = "free_x")
+
+```
+
+Similarly, moving on to form a linear model between height and weight
+
+```{r linear_mod_ht_wt, warning=FALSE, message=FALSE}
+
+# extract data 
+hd_adults_ht_wt <- (
+  hd_adults |> 
+    select(height, weight) 
+  )
+  
+
+# prior with data
+n_lines <- 500
+
+prior_lines <- (
+  tibble(
+    line_id = 1:n_lines, 
+    a = rnorm(n_lines, mean = 178, sd = 20), 
+    # since otherwise the relationships are going to look absurd otherwise 
+    b = rlnorm(n_lines, mean = 0, sd = 1)
+    ) |> 
+    expand_grid(weight = range(hd_adults_ht_wt$weight)) |> 
+    mutate(height_pred = a + b*(weight-mean(weight)))
+  )
+
+
+# make a tibble to annotate the plot
+text <-
+  tibble(weight = c(33, 36),
+         height_pred = c(0 - 25, 272 + 25),
+         label  = c("Embryo", "World's tallest person (272 cm)"))
+
+
+# plotting these lines
+prior_lines |> 
+  ggplot(aes(x = weight, y = height_pred)) +
+  geom_hline(yintercept = c(0, 272), linetype = 2:1, linewidth = 1/3) +
+  geom_line(aes(group = line_id), alpha = 1/10) +
+  geom_text(data = text,
+            aes(label = label),
+            size = 3) +
+  coord_cartesian(ylim = c(-100, 400)) 
+  
+  
+  
+  
+
+```
+
+Using `brms` to estimate the posterior distribution of this linear relationship
+
+```{r line_post_distn, warning = FALSE, message = FALSE}
+
+# this data is going to be used estimating the posterior distribution 
+hd_adults_ht_wt_2 <- (
+    hd_adults_ht_wt |> 
+    # recenter weights at the average in order to make 
+    # comparsions across multiple populations 
+    mutate(weight_c = weight - mean(weight))
+  )
+
+
+# calculate the posterior using the priors above 
+ht_wt_post <- (
+  hd_adults_ht_wt_2 |> 
+    brm(
+      formula = height ~ 1 + weight_c, 
+      family = gaussian, 
+      prior = c(
+        prior(normal(178, 28), class = Intercept),
+        prior(lognormal(0,1), class = b),
+        prior(uniform(0, 50), class = sigma, lb = 0, ub = 50)
+      ), 
+      iter = 2000, warmup = 1000, chains = 4, cores = 4, seed = 72, 
+      file = "../fits/height_weight_post"
+    )
+  )
+
+summary(ht_wt_post)
+
+plot(ht_wt_post)
+# similarly fitting a different formulation -- trying out the syntax of specifying formulae in brms
+
+# calculate the posterior using the priors above 
+ht_wt_post_nonlin <- (
+  hd_adults_ht_wt_2 |> 
+    brm(
+      formula = bf(height ~ a + exp(lb)*weight_c,
+        a ~ 1, 
+        lb ~ 1, 
+        nl = TRUE
+        ), 
+      family = gaussian, 
+      prior = c(
+        prior(normal(178, 28), class = b, nlpar = a),
+        prior(normal(0,1), class = b, nlpar = lb),
+        prior(cauchy(5, 1), class = sigma)
+      ), 
+      iter = 2000, warmup = 1000, chains = 4, cores = 4, seed = 72, 
+      file = "../fits/height_weight_nonlin_post"
+    )
+  )
+
+summary(ht_wt_post_nonlin)
+
+plot(ht_wt_post_nonlin)
+
+# To recover the values from the prveious linear fit, need to antilog the estimate
+fixef(ht_wt_post_nonlin)["lb_Intercept", "Estimate"] |> exp() |> round(3)
+# compared to the slope estimate from earlier
+fixef(ht_wt_post)["weight_c", "Estimate"] |> round(3)
+
+
+# Viewing the tables of marginal distributions
+posterior_summary(ht_wt_post)[1:3,] |> round(3)
+
+
+# calculating the variance-covariance among the parameters 
+ht_wt_post |> 
+  as_draws_df() |> 
+  select(b_Intercept, b_weight_c, sigma) |> 
+  cov() |> 
+  round(3)
+
+# visualizing the variance covariance matrix
+ht_wt_post |> 
+  as_draws_df() |> 
+  select(b_Intercept, b_weight_c, sigma) |> 
+  ggpairs(
+    diag = list(continuous = wrap("barDiag", bins = 50, colour = "black", fill = NA)), 
+    lower = list(continuous = wrap("points", shape = 21, 
+                                   colour = "black",
+                                   fill = "blue", alpha = 0.6)
+                 )
+  ) 
+
+
+
+
+```
+
+### Posterior Predictive Check –
+
+After having convinced yourself about the estimate of the posterior distribution. It is finally time compare the predictions from the estimated model with the data. Its is here that we also visualize how uncertainty plays into capturing the variation in the data.
+
+```{r post_pred_checks, warning = FALSE, message = FALSE}
+
+# note that the model was fit to a recentered distribution of weights. To represent 
+# the original values, the follwoing plot will be relabeled
+
+labels <- (
+  c(-10, 0, 10) + mean(hd_adults_ht_wt$weight) |> 
+    round(digits = 0)
+  )
+
+
+# fitting the mean line through the data 
+hd_adults_ht_wt_2 |> 
+  ggplot(aes(x = weight_c, y = height)) +
+  geom_point(shape = 21) +
+  geom_abline(
+    intercept = fixef(ht_wt_post)['Intercept', 'Estimate'],
+    slope     = fixef(ht_wt_post)['weight_c', 'Estimate'],
+    colour = "#D55E00"
+    )+
+  scale_x_continuous("weight",
+                     breaks = c(-10, 0, 10),
+                     labels = labels) 
+
+# demonstrating uncertainty around the regression lines 
+ht_wt_post_df <- (
+  ht_wt_post |> 
+    as_draws_df() 
+  )
+
+
+hd_adults_ht_wt_2 |> 
+  ggplot(aes(x = weight_c, y = height)) +
+  geom_point(shape = 21) +
+  geom_abline(
+    data = ht_wt_post_df |> 
+      slice(1:30), 
+    aes(
+      intercept = b_Intercept,
+      slope     = b_weight_c),
+    colour = "#D55E00", 
+    size = 0.1
+    )+
+  scale_x_continuous("weight",
+                     breaks = c(-10, 0, 10),
+                     labels = labels) 
+
+```
+
+That is all cool. But the main object of fitting a model is to generate prediction at particular values of the predictor. Lets say that we are interested in predicting the values of height for the 50kg interval.
+
+```{r regression_intervals}
+
+# first generating a prediction distribution at the average value 
+mean_wt <- hd_adults_ht_wt_2 |> summarise_all(mean) |> select(weight) |> unlist()
+
+# then
+mu_at_50_dist <- (
+  ht_wt_post_df |> 
+    transmute(mu = b_Intercept + (50-mean_wt)*b_weight_c)
+) 
+  
+# generating the table of uncertainty at 50kg weight
+mean_hdi(mu_at_50_dist, .width = c(0.89, 0.95))
+
+
+# corresponding plot showing the distribution of mu 
+mu_at_50_dist |> 
+  ggplot(aes(x = mu)) +
+  stat_halfeye(point_interval = mode_hdi, .width = .95,
+               fill = '#1f77b4') +
+  #scale_y_continuous(NULL, breaks = NULL) +
+  labs(
+    x = expression(mu["height | weight = 50"]), 
+    y = "probability"
+    ) 
+  
+# similalry using brms::fitted, one can calulate average predictions for a arbitrary
+# data 
+
+# lets use values from the exrecise problems 
+weight_seq <- (
+  tibble(
+    weight = c(46.95, 43.72, 64.78, 32.59, 54.63)
+  ) |>
+    # recenter this new data according to the mean wt from the previous data to which
+    # the model was fit
+    mutate(
+      individual = 1:5,
+      weight_c = weight - mean_wt
+      )
+)
+  
+# summarised prediction for mu at different are therefore given as 
+pred_mu_arb_sum <- (
+  weight_seq |> 
+    bind_cols(
+      fitted(
+        object = ht_wt_post, 
+        newdata = weight_seq, 
+        summary = TRUE, 
+        probs = c(0.105, 0.785)
+        ) |> 
+        as_tibble()    
+    )
+  
+)
+  
+# now generating the prediction for all values of weight in he original dataset
+pred_mu_df <- (
+  fitted(object = ht_wt_post, 
+         newdata = hd_adults_ht_wt_2, summary = FALSE) |>  
+  as_tibble() |> 
+  rlang::set_names(1:nrow(hd_adults_ht_wt_2)) |> 
+  mutate(iter = 1:n()) |> 
+  pivot_longer(cols = -iter, 
+               names_to = "id", 
+               values_to = "pred_mu"
+               )
+  
+)
+
+hd_adults_wt_2 <- hd_adults_ht_wt_2 |> 
+  mutate(id = 1:n() |>as.character()) |> 
+  select(id, weight, height)
+
+
+
+pred_mu_plot_df <- (
+  pred_mu_df |>  
+    right_join(hd_adults_wt_2, by = "id")
+    )
+
+pred_mu_plot_df |> 
+  group_by(id) |> 
+  sample_n(50, replace = FALSE) |> 
+  ungroup() |> 
+  ggplot(aes(x = weight, y = pred_mu, group = iter)) +
+  geom_point(shape = 21, colour = '#1f77b4', fill = NA)+
+  labs(y = "height")
+
+
+# finally the prediction intervals 
+# first: summarise posterior predicted average mu 
+pred_mu_df_sum <- (
+  fitted(object = ht_wt_post, 
+         newdata = hd_adults_ht_wt_2,  probs = c(0.025, 0.975)) |> 
+  as_tibble() |> 
+  mutate(id = 1:n() |> as.character()) |> 
+  right_join(
+      hd_adults_wt_2, by = "id"
+    )
+  
+)
+
+# second: summarise the posterior predictive distribution of the response
+pred_height_df_sum <- (
+  predict(object = ht_wt_post, 
+         newdata = hd_adults_ht_wt_2,  probs = c(0.025, 0.105, 0.975, 0.785)) |> 
+  as_tibble() |> 
+  mutate(id = 1:n() |> as.character()) |> 
+  right_join(
+      hd_adults_wt_2, by = "id"
+    )
+  
+)
+
+
+# plot the posterior preditive distribution of the rsponse and the average.
+pred_mu_df_sum |> 
+  ggplot(aes(x = weight))+
+  geom_point(aes(y = height), shape = 21, colour = "black", fill = NA) +
+  geom_ribbon(data = pred_height_df_sum, 
+              aes(ymin = Q2.5, ymax = Q97.5), 
+              fill = "#D55E00", alpha = 0.3
+              ) +
+  geom_ribbon(data = pred_height_df_sum, 
+              aes(ymin = Q10.5, ymax = Q78.5), 
+              fill = "#D55E00", alpha = 0.5
+              ) +
+  geom_smooth(aes(y = Estimate, ymin = Q2.5, ymax = Q97.5), 
+              colour = "#F0E442", fill = "#D55E00", stat = "identity", alpha = 0.8) 
+
+
+
+
+```
+
+### Exercises
+
+Carrying out some rudimentary analyses on the rest of the data.
+
+This is an exercise set from the **statistical rethinking** textbook. Starting out with the Howell data concentrating only on individuals who are younger than 18 years
+
+```{r exercises_1, message=FALSE, warning=FALSE}
+# selecting out individuals 
+
+# subset the Howell data to include only adults 
+hd_young <- hd |> filter(age < 18) 
+
+# a quick plot to look at the relationship between height and weight
+hd_young |> 
+  ggplot(aes(x = weight, y = height))+
+  geom_point(pch = 21, fill = NA, , colour = "black")
+
+
+# fitting a linear model to this data 
+# center the weights around the mean 
+hd_young_2 <- hd_young |> mutate(weight_c = weight - mean(weight))
+
+ht_wt_young_post <- (
+  hd_young_2 |> 
+    brm(
+      data = _,
+      formula = height ~ 1 + weight_c, 
+      family = gaussian, 
+      prior = c(
+        prior(normal(178, 28), class = Intercept),
+        prior(lognormal(0,1), class = b),
+        prior(inv_gamma(1, 0.5), class = sigma)
+      ), 
+      iter = 2000, warmup = 1000, chains = 4, cores = 4, seed = 72, 
+      file = "../fits/ht_wt_young_post"
+    )
+  )
+
+# how does the summary of estimates look like 
+
+summary(ht_wt_young_post)
+
+# Based on the marginal distribution for parameter estimates every 10 kg increase in weight, 
+# the height shows a increase of 27.2 cm 
+
+# the prediction intervals 
+# first: summarise predicted mu 
+
+pred_mu_young_df_sum <- (
+  fitted(object = ht_wt_young_post, 
+         newdata = hd_young_2,  probs = c(0.025, 0.975)) |> 
+  as_tibble() |> 
+  mutate(id = 1:n() |> as.character()) |> 
+  right_join(
+      hd_young_2 |> 
+        mutate(id = 1:n() |> as.character()), 
+      by = "id"
+    )
+)
+
+
+pred_height_young_df_sum <- (
+  predict(object = ht_wt_young_post, 
+         newdata = hd_young_2,  probs = c(0.025, 0.105, 0.975, 0.785)) |> 
+  as_tibble() |> 
+  mutate(id = 1:n() |> as.character()) |> 
+  right_join(
+      hd_young_2 |> 
+        mutate(id = 1:n() |> as.character()), 
+      by = "id"
+    )
+  
+)
+
+
+# plot the posterior preditive distribution 
+pred_mu_young_df_sum |> 
+  ggplot(aes(x = weight))+
+  geom_point(aes(y = height), shape = 21, colour = "white", fill = NA) +
+  geom_ribbon(data = pred_height_young_df_sum, 
+              aes(ymin = Q2.5, ymax = Q97.5), 
+              fill = "#D55E00", alpha = 0.3
+              ) +
+  geom_ribbon(data = pred_height_young_df_sum, 
+              aes(ymin = Q10.5, ymax = Q78.5), 
+              fill = "#D55E00", alpha = 0.5
+              ) +
+  geom_smooth(aes(y = Estimate, ymin = Q2.5, ymax = Q97.5), 
+              colour = "#F0E442", fill = "#D55E00", stat = "identity", alpha = 0.8) 
+```
+
+
