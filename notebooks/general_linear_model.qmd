@@ -618,5 +618,3 @@ pred_mu_young_df_sum |>
   geom_smooth(aes(y = Estimate, ymin = Q2.5, ymax = Q97.5), 
               colour = "#F0E442", fill = "#D55E00", stat = "identity", alpha = 0.8) 
 ```
-
-

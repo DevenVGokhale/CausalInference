@@ -3,7 +3,283 @@ title: "Multi-level models (Case Study)"
 author: "Deven Gokhale"
 format: 
   html:
-    theme: darkly
+    theme: sketchy
     code-fold: true
 editor: visual
 ---
+
+# Introduction
+
+This notebook goes over the concepts discussed in lectures 12 through 14 of the Statistical Rethinking course from 2023. This notebook updates the original series codes which define models in the `rethinking` package into `brms` and `rstan` implementation. This is an attempt to provide a tidyverse reference to the codes from the original lecture series. The implentation here is borrowed from the style that is shown in this wonderful reference ....
+
+```{r prelims}
+#| warning: false
+#| message: false
+rm(list = ls())
+
+# packages ---
+library(dplyr)
+
+library(brms)
+library(extraDistr, include.only = c("dhcauchy"))
+library(psych, include.only="describe")
+library(tidyr, include.only = c("pivot_longer", "pivot_wider"))
+
+library(ggplot2)
+library(patchwork)
+library(ggdag)
+library(dagitty)
+library(scico)
+
+theme_set(theme_bw(base_size=15))
+
+root <- "/Users/devengokhale/Documents/GitHub/CausalInference"
+
+if (getwd() == root) {
+    fit_path <- "./fits"
+} else {
+    fit_path <- "../fits"
+}
+
+
+# extract data from the rethinking pacakge ---
+data(reedfrogs, package = "rethinking")
+data(bangladesh, package = "rethinking")
+data(Trolley, package = "rethinking")
+```
+
+# Bangladesh Fertility Survey
+
+## Setting up
+
+```{r colour_palette}
+#| warning: false
+#| message: false
+#| fig-height: 0.85
+#| fig-cap: Using the colour palette "Tokyo" from library `scico` for this example.
+
+# Generate the color palette
+colors <- scico(15, palette = "tokyo")
+
+colors
+
+# Create a data frame for plotting
+df <- data.frame(
+  x = seq_along(colors),
+  y = 1,
+  color = colors,
+  hex = colors
+)
+
+# Plot the colors as a swatch
+ggplot(df, aes(x = x, y = y, fill = I(color))) +
+  geom_tile(color = "black", linewidth = 0.5) +  
+  geom_text(aes(label = hex), angle = 90, color = "white", size = 3) +  
+  scale_y_continuous(expand = c(0, 0)) +  # Remove padding
+  labs(x = "", y = "") +
+  theme_void() +  # Minimal theme
+  theme(
+    legend.position = "none",
+    plot.margin = margin(10, 10, 10, 10)
+  )
+```
+
+## About the Dataset
+
+The data set is a national fertility survey from 1989. It has demographic information about 1934 women collected from 61 districts of the Bangladesh. The outcome of interest was *contraceptive use*. They wanted to know what causal relationships resulted into changes in contraceptive use.
+
+```{r descriptives}
+#| warning: false
+#| message: false
+
+bangla_sum <- describe(bangladesh)
+bangla_sum
+```
+
+## Full Model
+
+According to the lecture, contraceptive use can be explained through a complex pathway of connections between the variables in the datset. The plan here
+
+-   Draw the full DAG
+-   Explaing the possible relationships
+-   Then start building from Ground-up, iteratively making the model more complex.
+
+In the DAG, the contraceptive use (*C*) is influenced all the other covariates *viz.,* district of origin (*D*), Number of children (*K)*, Age of the woman (*A*) and Urbanicity of the district (*U*). Further, relationships can be described among the covariates *eg., U and A and can together influence K. Similarly, D can cause U.*
+
+```{r, full_mod_dag}
+#| warning: false
+#| message: false
+#| fig-height: 6
+#| fig-cap: Full model DAG demonstrating relationships among covariates presented in the 1934 Banglandeshi womens' health survey.
+
+
+full_model_dag <- dagify(
+    C ~ A + K + U + D,
+    K ~ A + U + D, 
+    U ~ D,
+    outcome = "C"
+)
+
+tidy_dagitty(full_model_dag)
+
+ggdag(full_model_dag, layout = "circle") +
+    geom_dag_node(colour = "#AEE296", alpha = 0.2) +  
+    geom_dag_text() +
+    theme_dag()
+    
+```
+
+Tackling the whole DAG is a bit daunting. These are going to be my subsequesnt steps ---
+
+-   Add **varying effects** for district
+-   Add Urbanacity as a covariate to control for rural/urban divide
+-   Produce some predictions for both these steps
+-   Convince yourself that the the data actually moves the prior around
+
+## Multi-level model with **District (D)** as a varying effect
+
+The response is a binary variable indicating whether a woman resorted to contraceptive use. The data shows considerable variation across districts as is demonstrated in the the figure below. The two responses that have perfect representations have very few women that responded to the survey ($n \leq 5$).
+
+```{r, district_eff}
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 7
+#| fig-cap: Variation of reponses across various districts in Bangladesh. (A) shows the varied probability of contraceptive use; (B) shows the the number of partcipants per district. Outlier responses (red) were acertained for districts with very low participation ($n<=5$).
+
+bangla_plot_data <- (
+    bangladesh |> 
+        group_by(district) |> 
+        summarise(
+            n_woman = n(),
+            p_contra_use = sum(use.contraception)/n(),
+            outlier = if_else(n_woman <= 5, "Yes", "No")
+            ) |> 
+        ungroup()
+    )
+
+plt1 <- (
+    bangla_plot_data |>   
+        ggplot(aes(x = district, colour = outlier)) +
+        geom_point(aes(y = p_contra_use), size = 4, shape = 21) +
+        scale_colour_manual(values = c("No" = "black", "Yes" = "red")) +
+        labs(x = "", y = "P(Contraceptive use)") +
+        theme(legend.position = "None")
+        
+    )
+plt2 <- (
+    bangla_plot_data |> 
+        ggplot(aes(x = district, colour = outlier)) +
+        geom_bar(aes(y = n_woman), stat = "identity", fill = NA,  position = "dodge") +
+        scale_colour_manual(values = c("No" = "black", "Yes" = "red")) +
+        labs(x = "District", y = "Number of women", colour = "Outlier") +
+        theme(
+            legend.position = c(0.5, 0.8), 
+            legend.background = element_rect(fill = NA), 
+            legend.key = element_rect(fill = NA)
+            ) +
+        guides(colour = guide_legend(ncol = 2, title.position = "left"))
+    )
+
+plt1 + plt2 +
+    plot_layout(
+        design = "
+        A
+        B
+        ", 
+        heights = c(1, 0.5)) +
+    plot_annotation(tag_levels="A")
+
+```
+
+```{r varying_effect_dag}
+#| warning: false
+#| message: false
+#| fig-cap: Starting simple. Adding "district" as the only covariate for a partially pooled model.
+
+veff_dag <- dagify(
+    C ~ D,
+    outcome = "C"
+)
+
+ggdag(veff_dag, layout = "circle") +
+    geom_dag_node(colour = "#AEE296", alpha = 0.2) +  
+    geom_dag_text() +
+    theme_dag()
+```
+
+Starting with the model with random intercept. The ourcome of interest contraceptive use (C) is a binary variable. For the first iteration of the model, therefore, the model is going to be --
+
+$$
+\begin{aligned}    
+    C_i &\sim \text{Bernoulli}(p_i)\\
+    &\operatorname{logit}(p_i) = α_{D[i]}\\
+    α_{D} &\sim \text{Normal}(\bar{α},σ)\\
+    \bar{a} &\sim \text{Normal}(0,1)\\
+    σ &\sim \text{Exponential}(1)\\
+\end{aligned}
+$$
+
+```{r bm11.0_prior}
+#| warning: false
+#| message: false
+#| fig-height: 5
+#| fig-cap: Default v/s elicited priors --- brms uses Student-T distribution for all parameter values. Using Student-T distribution on real valued variables and Half-Cauchy for positive real-valued variables.
+
+# defining the model folrmula to verify the default priors ---
+bf11.0 <- bf(
+    formula = use.contraception ~ 1 + (1 | district),
+    family = bernoulli(link = "logit")
+)
+
+# what are the default priors ---
+get_prior(bf11.0, data=bangladesh)
+
+# visualizing the default and the elicited priors ---
+tibble(x = -20:20) |> 
+    ggplot(aes(x)) +
+    labs(y = "Density", color = "Elicited\nDistribution") +
+    stat_function(fun = dnorm, args = list(mean = 0, sd = 1.5), 
+                    linewidth = 1, aes(color = "Normal")) +
+    stat_function(fun = dstudent_t, args = list(df = 3, mu = 0, sigma = 2.5),
+                    linewidth = 1, aes(color = "Student-T")) +
+    stat_function(fun = dexp, args = list(rate = 1),
+                    linewidth = 1, aes(color = "Exponential")) +             
+    stat_function(fun = dhcauchy, args = list(sigma = 1),
+                    linewidth = 1, aes(color = "Half-Cauchy")) +
+    scale_color_manual(
+        values = c("Normal" = "Black", "Student-T" = "#3A183E", 
+                "Exponential" = "#673D4D", "Half-Cauchy" = "#81A95E")
+                ) +
+    theme(legend.position = c(0.8, 0.5), 
+          legend.background = element_rect(fill = NA), 
+          legend.key = element_rect(fill = NA)
+          )
+```
+
+```{r bm11.0_post}
+
+# varrying-effects on the intercept
+bm11.0_priors <- c(
+    prior(student_t(3,0,2.5), class = Intercept),
+    prior(cauchy(0,1), class = sd)
+)
+
+# 
+bm11.0 <- brm(
+    formula = bf11.0,
+    data = bangladesh,
+    family = bernoulli(link = "logit"),
+    prior = bm11.0_priors,
+    sample_prior = TRUE,
+    chains = 4,
+    iter = 2000,
+    warmup = 1000,
+    cores = 4,  
+    control = list(adapt_delta = 0.95),
+    seed = 42, 
+    file = paste0(fit_path, "/bm11.0")
+)
+
+bm11.0
+```
