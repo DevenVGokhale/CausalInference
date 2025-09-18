@@ -8,6 +8,12 @@ format:
 editor: visual
 ---
 
+```{css, echo: false}
+.cell-output-stdout {
+  max-height: 500px;  /* Adjust this value as needed, e.g., 400px or 500px */
+  overflow-y: auto;
+}
+
 # Introduction
 
 This notebook goes over the concepts discussed in lectures 12 through 14 of the Statistical Rethinking course from 2023. This notebook updates the original series codes which define models in the `rethinking` package into `brms` and `rstan` implementation. This is an attempt to provide a tidyverse reference to the codes from the original lecture series. The implentation here is borrowed from the style that is shown in this wonderful reference ....
@@ -208,32 +214,34 @@ ggdag(veff_dag, layout = "circle") +
     theme_dag()
 ```
 
-Starting with the model with random intercept. The ourcome of interest contraceptive use (C) is a binary variable. For the first iteration of the model, therefore, the model is going to be --
+Starting with the model with random intercept. The outcome of interest contraceptive use (C) is a binary variable. For the first iteration of the model, therefore, the model is going to be --
 
 $$
 \begin{aligned}    
     C_i &\sim \text{Bernoulli}(p_i)\\
-    &\operatorname{logit}(p_i) = α_{D[i]}\\
+    \operatorname{logit}(p_i) &= α_{D[i]}\\
     α_{D} &\sim \text{Normal}(\bar{α},σ)\\
-    \bar{a} &\sim \text{Normal}(0,1)\\
-    σ &\sim \text{Exponential}(1)\\
+    \bar{a} &\sim \text{StudentT}(3,0,2.5)\\
+    σ &\sim \text{Half-Cauchy}(0,1)\\
 \end{aligned}
 $$
 
-```{r bm11.0_prior}
+Defining the multilevel model here. Since most of this material is from the Statistical rethinking chapter 13, I am adjusting the nomenclature accordingly.  
+
+```{r bm13.0_prior}
 #| warning: false
 #| message: false
 #| fig-height: 5
 #| fig-cap: Default v/s elicited priors --- brms uses Student-T distribution for all parameter values. Using Student-T distribution on real valued variables and Half-Cauchy for positive real-valued variables.
 
 # defining the model folrmula to verify the default priors ---
-bf11.0 <- bf(
+bf13.0 <- bf(
     formula = use.contraception ~ 1 + (1 | district),
     family = bernoulli(link = "logit")
 )
 
 # what are the default priors ---
-get_prior(bf11.0, data=bangladesh)
+get_prior(bf13.0, data=bangladesh)
 
 # visualizing the default and the elicited priors ---
 tibble(x = -20:20) |> 
@@ -257,29 +265,90 @@ tibble(x = -20:20) |>
           )
 ```
 
-```{r bm11.0_post}
+```{r bm13.0_post}
+#| warning: false
+#| message: false
 
 # varrying-effects on the intercept
-bm11.0_priors <- c(
-    prior(student_t(3,0,2.5), class = Intercept),
-    prior(cauchy(0,1), class = sd)
+bm13.0_priors <- c(
+    prior(student_t(3,0,2.5), class = Intercept), # \bar{α}
+    prior(cauchy(0,1), class = sd)                # σ
 )
 
-# 
-bm11.0 <- brm(
-    formula = bf11.0,
+# fit the model---
+bm13.0 <- brm(
+    formula = bf13.0,
     data = bangladesh,
-    family = bernoulli(link = "logit"),
-    prior = bm11.0_priors,
-    sample_prior = TRUE,
+    prior = bm13.0_priors,
+    sample_prior = "yes",
     chains = 4,
     iter = 2000,
     warmup = 1000,
     cores = 4,  
     control = list(adapt_delta = 0.95),
     seed = 42, 
-    file = paste0(fit_path, "/bm11.0")
+    file = paste0(fit_path, "/bm13.0"),
+    save_pars = save_pars(all = TRUE)
 )
 
-bm11.0
+print(bm13.0)
+
+# adding "waic" for model comparison later 
+bm13.0 <- add_criterion(bm13.0, "waic")
+
+
+```
+
+For the sake of completion I am alsoe going to define a fixed effects model here. Meaning, there is a fixed intercept for every district. The model thus becomes -- 
+$$
+\begin{aligned}    
+    C_i &\sim \text{Bernoulli}(p_i)\\
+    \operatorname{logit}(p_i) &= α_{D[i]}\\
+    α_{D} &\sim \text{StudentT}(3,0,2.5)\\
+\end{aligned}
+$$
+
+
+```{r bm13.0.1}
+#| warning: false
+#| message: false
+
+# model formula ---
+bf13.0.1 <- bf(
+    formula = use.contraception ~ 0 + factor(district),
+    family = bernoulli(link = "logit")
+)
+
+# priors ---
+bm13.0.1_priors <- c(
+    prior(student_t(3,0,2.5), class = b)
+)
+
+# fit the model ---
+bm13.0.1 <- brm(
+    formula = bf13.0.1,
+    data = bangladesh,
+    prior = bm13.0.1_priors,
+    sample_prior = "yes",
+    chains = 4,
+    iter = 2000,
+    warmup = 1000,
+    cores = 4,  
+    control = list(adapt_delta = 0.95),
+    seed = 42, 
+    file = paste0(fit_path, "/bm13.0.1"),
+    save_pars = save_pars(all = TRUE)
+)
+print(bm13.0.1)
+
+# adding the waic like before 
+bm13.0.1 <- add_criterion(bm13.0.1, "waic")
+
+w <- loo_compare(bm13.0, bm13.0.1, criterion = "waic")
+print(w, simplify = F)
+
+loo13.0 <- loo(bm13.0)
+loo13.0.1 <- loo(bm13.0.1) # --> I get a pareto_k > 0.7 warning, need to investigate.
+
+loo_compare(loo13.0, loo13.0.1)
 ```
