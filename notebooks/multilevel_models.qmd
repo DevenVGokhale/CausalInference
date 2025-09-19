@@ -10,7 +10,7 @@ editor: visual
 
 ```{css, echo: false}
 .cell-output-stdout {
-  max-height: 500px;  /* Adjust this value as needed, e.g., 400px or 500px */
+  max-height: 500px;  
   overflow-y: auto;
 }
 
@@ -344,11 +344,15 @@ print(bm13.0.1)
 # adding the waic like before 
 bm13.0.1 <- add_criterion(bm13.0.1, "waic")
 
-w <- loo_compare(bm13.0, bm13.0.1, criterion = "waic")
-print(w, simplify = F)
+waic_loo <- loo_compare(bm13.0, bm13.0.1, criterion = "waic")
+print(waic_loo, simplify = F)
 
 loo13.0 <- loo(bm13.0)
-loo13.0.1 <- loo(bm13.0.1) # --> I get a pareto_k > 0.7 warning, need to investigate.
+loo13.0.1 <- loo(bm13.0.1) # --> I get a `pareto_k > 0.7` warning. Need to investigate.
 
-loo_compare(loo13.0, loo13.0.1)
+psis_loo <- loo_compare(loo13.0, loo13.0.1)
+print(psis_loo, simplify = F)
 ```
+
+For model comparison, the guide suggests conducting leave-one-out (loo) cross-validation (CV). CV provides the basis of quantifying predictability about the data the model has not observed, given that it has been trained on the rest of the data. It also provides the assessment of 'overfitting' by model. I am using two metrics here -- (1) Weighted-AIC (waic); (2) Pareto-smoothed importance sampling (psis). 
+
