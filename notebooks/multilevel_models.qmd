@@ -227,7 +227,7 @@ $$
 \end{aligned}
 $$
 
-Defining the multilevel model here. Since most of this material is from the Statistical rethinking chapter 13, I am adjusting the nomenclature accordingly.  
+Defining the multilevel model here. Since most of this material is from the Statistical rethinking chapter 13, I am adjusting the nomenclature accordingly.
 
 ```{r bm13.0_prior}
 #| warning: false
@@ -300,15 +300,13 @@ bm13.0 <- add_criterion(bm13.0, "waic")
 
 ```
 
-For the sake of completion I am alsoe going to define a fixed effects model here. Meaning, there is a fixed intercept for every district. The model thus becomes -- 
-$$
+For the sake of completion I am alsoe going to define a fixed effects model here. Meaning, there is a fixed intercept for every district. The model thus becomes -- $$
 \begin{aligned}    
     C_i &\sim \text{Bernoulli}(p_i)\\
     \operatorname{logit}(p_i) &= α_{D[i]}\\
     α_{D} &\sim \text{StudentT}(3,0,2.5)\\
 \end{aligned}
 $$
-
 
 ```{r bm13.0.1}
 #| warning: false
@@ -348,7 +346,7 @@ bm13.0.1 <- add_criterion(bm13.0.1, "waic")
 
 ## Model comparison with leave-one-out cross validation
 
-For model comparison, the guide suggests conducting leave-one-out (loo) cross-validation (CV). CV provides the basis of quantifying predictability about the data the model has not observed, given that it has been trained on the rest of the data. It also provides the assessment of 'overfitting' by model. I am using two metrics here -- (1) Weighted-AIC (waic); (2) Pareto-smoothed importance sampling (psis). *Note:* waic needs to be added seperately into the model. 
+For model comparison, the guide suggests conducting leave-one-out (loo) cross-validation (CV). CV provides the basis of quantifying predictability about the data the model has not observed, given that it has been trained on the rest of the data. It also provides the assessment of 'overfitting' by model. I am using two metrics here -- (1) Weighted-AIC (waic); (2) Pareto-smoothed importance sampling (psis). *Note:* waic needs to be added seperately into the model.
 
 ```{r waic_loo}
 #| warning: false
@@ -358,7 +356,7 @@ waic_loo <- loo_compare(bm13.0, bm13.0.1, criterion = "waic")
 print(waic_loo, simplify = F)
 ```
 
-Based on waic, we the multilevel model does a better job on prdiction. To do a bit better on the the cross-validation. I am now going to produce a similar result with psis approximated CV -- 
+Based on waic, we the multilevel model does a better job on prdiction. To do a bit better on the the cross-validation. I am now going to produce a similar result with psis approximated CV --
 
 ```{r psis_loo}
 #| fig-cap: "Diagnostic plot showing the Pareto-k values across all data points to assess the reliability of PSIS aprroximation of LOO-CV. Values less than 0.7 are taken to be healthy."
@@ -386,9 +384,9 @@ tibble(
 The PSIS-loo CV seems to be show very healthy points. Accoding to these results, the partially-pooled model (bm13.0) is clearly a better model than the unpooled fixed effects model. These steps will be repeated as I experiment with other models.
 
 ## Posterior prediction
-The main thing that we expect from the model, is the posterior prediction of the  
+
+The main thing that we expect from the model, is the posterior prediction of the
+
 ```{r}
 coef(bm13.0, robust = TRUE)$district[, , "Intercept"]
 ```
-
- 
