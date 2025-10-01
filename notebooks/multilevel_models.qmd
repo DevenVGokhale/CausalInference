@@ -8,11 +8,12 @@ format:
 editor: visual
 ---
 
-```{css, echo: false}
+```{css notebook_appearance, echo: false}
 .cell-output-stdout {
   max-height: 500px;  
   overflow-y: auto;
 }
+```
 
 # Introduction
 
@@ -112,7 +113,7 @@ According to the lecture, contraceptive use can be explained through a complex p
 
 In the DAG, the contraceptive use (*C*) is influenced all the other covariates *viz.,* district of origin (*D*), Number of children (*K)*, Age of the woman (*A*) and Urbanicity of the district (*U*). Further, relationships can be described among the covariates *eg., U and A and can together influence K. Similarly, D can cause U.*
 
-```{r, full_mod_dag}
+```{r full_mod_dag}
 #| warning: false
 #| message: false
 #| fig-height: 6
@@ -321,7 +322,7 @@ bf13.0.1 <- bf(
 
 # priors ---
 bm13.0.1_priors <- c(
-    prior(student_t(3,0,2.5), class = b)
+    prior(normal(0,1), class = b)
 )
 
 # fit the model ---
@@ -343,16 +344,51 @@ print(bm13.0.1)
 
 # adding the waic like before 
 bm13.0.1 <- add_criterion(bm13.0.1, "waic")
+```
+
+## Model comparison with leave-one-out cross validation
+
+For model comparison, the guide suggests conducting leave-one-out (loo) cross-validation (CV). CV provides the basis of quantifying predictability about the data the model has not observed, given that it has been trained on the rest of the data. It also provides the assessment of 'overfitting' by model. I am using two metrics here -- (1) Weighted-AIC (waic); (2) Pareto-smoothed importance sampling (psis). *Note:* waic needs to be added seperately into the model. 
+
+```{r waic_loo}
+#| warning: false
+#| message: false 
 
 waic_loo <- loo_compare(bm13.0, bm13.0.1, criterion = "waic")
 print(waic_loo, simplify = F)
+```
 
+Based on waic, we the multilevel model does a better job on prdiction. To do a bit better on the the cross-validation. I am now going to produce a similar result with psis approximated CV -- 
+
+```{r psis_loo}
+#| fig-cap: "Diagnostic plot showing the Pareto-k values across all data points to assess the reliability of PSIS aprroximation of LOO-CV. Values less than 0.7 are taken to be healthy."
 loo13.0 <- loo(bm13.0)
 loo13.0.1 <- loo(bm13.0.1) # --> I get a `pareto_k > 0.7` warning. Need to investigate.
 
 psis_loo <- loo_compare(loo13.0, loo13.0.1)
 print(psis_loo, simplify = F)
+
+tibble(
+    pareto_k = c(loo13.0.1$diagnostics$pareto_k, loo13.0.1$diagnostics$pareto_k)) |> 
+    mutate(
+        point = rep(1:nrow(bangladesh), times=2),
+        model = c(rep("bm13.0.1", each=nrow(bangladesh)), 
+                  rep("bm13.0", each=nrow(bangladesh)))
+        ) |> 
+    ggplot(aes(x = point, y = pareto_k)) +
+    geom_point(size = 3, shape = 3) +
+    geom_hline(yintercept = 0.7, linetype = "dashed", linewidth = 0.8, colour = "darkred") +
+    geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.4) +
+    facet_wrap(.~model, nrow = 2, scales = "fixed") +
+    labs(x = " Data point", y = "Pareto K value") 
 ```
 
-For model comparison, the guide suggests conducting leave-one-out (loo) cross-validation (CV). CV provides the basis of quantifying predictability about the data the model has not observed, given that it has been trained on the rest of the data. It also provides the assessment of 'overfitting' by model. I am using two metrics here -- (1) Weighted-AIC (waic); (2) Pareto-smoothed importance sampling (psis). 
+The PSIS-loo CV seems to be show very healthy points. Accoding to these results, the partially-pooled model (bm13.0) is clearly a better model than the unpooled fixed effects model. These steps will be repeated as I experiment with other models.
 
+## Posterior prediction
+The main thing that we expect from the model, is the posterior prediction of the  
+```{r}
+coef(bm13.0, robust = TRUE)$district[, , "Intercept"]
+```
+
+ 
