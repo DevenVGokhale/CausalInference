@@ -300,7 +300,8 @@ bm13.0 <- add_criterion(bm13.0, "waic")
 
 ```
 
-For the sake of completion I am alsoe going to define a fixed effects model here. Meaning, there is a fixed intercept for every district. The model thus becomes -- $$
+For the sake of completion I am alsoe going to define a fixed effects model here. Meaning, there is a fixed intercept for every district. The model thus becomes -- 
+$$
 \begin{aligned}    
     C_i &\sim \text{Bernoulli}(p_i)\\
     \operatorname{logit}(p_i) &= α_{D[i]}\\
@@ -359,26 +360,55 @@ print(waic_loo, simplify = F)
 Based on waic, we the multilevel model does a better job on prdiction. To do a bit better on the the cross-validation. I am now going to produce a similar result with psis approximated CV --
 
 ```{r psis_loo}
-#| fig-cap: "Diagnostic plot showing the Pareto-k values across all data points to assess the reliability of PSIS aprroximation of LOO-CV. Values less than 0.7 are taken to be healthy."
+#| fig-cap: "Diagnostic plot showing the Pareto-k values across all data points to assess the reliability of PSIS aprroximation of LOO-CV. Values less than 0.7 are taken to be healthy. NEED TO MODIFY THIS CAPTION TO TALK ABOUT PART B OF THE PLOT."
+#| fig-width: 10
 loo13.0 <- loo(bm13.0)
-loo13.0.1 <- loo(bm13.0.1) # --> I get a `pareto_k > 0.7` warning. Need to investigate.
+loo13.0.1 <- loo(bm13.0.1) 
 
 psis_loo <- loo_compare(loo13.0, loo13.0.1)
 print(psis_loo, simplify = F)
 
-tibble(
-    pareto_k = c(loo13.0.1$diagnostics$pareto_k, loo13.0.1$diagnostics$pareto_k)) |> 
+diagnostic_plt_data <- (
+    tibble(
+        pareto_k = c(
+            loo13.0.1$diagnostics$pareto_k, 
+            loo13.0$diagnostics$pareto_k),
+        penalty_loo = c(
+            loo13.0.1$pointwise[,"p_loo"],
+            loo13.0$pointwise[,"p_loo"] 
+    )) |> 
     mutate(
         point = rep(1:nrow(bangladesh), times=2),
         model = c(rep("bm13.0.1", each=nrow(bangladesh)), 
                   rep("bm13.0", each=nrow(bangladesh)))
-        ) |> 
-    ggplot(aes(x = point, y = pareto_k)) +
-    geom_point(size = 3, shape = 3) +
-    geom_hline(yintercept = 0.7, linetype = "dashed", linewidth = 0.8, colour = "darkred") +
-    geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.4) +
-    facet_wrap(.~model, nrow = 2, scales = "fixed") +
-    labs(x = " Data point", y = "Pareto K value") 
+        )
+)
+
+    
+pareto_plt <- (
+    diagnostic_plt_data |> 
+        ggplot(aes(x = point, y = pareto_k)) +
+        geom_point(size = 3, shape = 3) +
+        geom_hline(yintercept = 0.7, linetype = "dashed", linewidth = 0.8, colour = "darkred") +
+        geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.4) +
+        facet_wrap(.~model, nrow = 2, scales = "fixed") +
+        labs(x = " Data point", y = "Pareto K statistic")
+)
+
+influence_plt <- (
+    diagnostic_plt_data |> 
+        ggplot(aes(x = pareto_k, y = penalty_loo)) +
+        geom_point(size = 3, shape = 21) +
+        facet_wrap(.~model, nrow = 2, scales = "fixed") +
+        labs(x = "Pareto K statistic", y = "PSIS Penalty") 
+)
+
+pareto_plt + influence_plt +
+    plot_layout(
+        design = "
+        AB
+        ") +
+    plot_annotation(tag_levels="A")
 ```
 
 The PSIS-loo CV seems to be show very healthy points. Accoding to these results, the partially-pooled model (bm13.0) is clearly a better model than the unpooled fixed effects model. These steps will be repeated as I experiment with other models.
