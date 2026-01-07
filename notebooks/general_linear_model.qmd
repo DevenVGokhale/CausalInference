@@ -23,9 +23,9 @@ library(dplyr)
 theme_set(theme_bw())
 # setting up some stan options to make it run faster 
 # Load necessary libraries and set up multi-core processing for Stan
-options(warn=-1, message =-1)
+options(warn=-1, message =-1) 
 
-#rstan_options(auto_write = TRUE)
+rstan_options(auto_write = TRUE) 
 
 # assign multiple cores to the estimation values 
 #options(mc.cores = detectCores()-4)
