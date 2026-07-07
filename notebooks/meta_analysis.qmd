@@ -1,0 +1,92 @@
+---
+title: "Meta-analysis from Solomon Kurz's blog"
+author: "Deven Gokhale"
+format: 
+  html:
+    theme: sketchy
+    code-fold: true
+editor: visual
+---
+
+```{css notebook_appearance, echo: false}
+.cell-output-stdout {
+  max-height: 500px;  
+  overflow-y: auto;
+}
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+rm(list = ls())
+
+# packages ---
+library(dplyr)
+
+library(brms)
+library(extraDistr, include.only = c("dhcauchy"))
+library(psych, include.only = "describe")
+library(tidyr, include.only = c("pivot_longer", "pivot_wider"))
+library(tibble, include.only = "tibble")
+
+library(ggplot2)
+library(patchwork)
+library(ggdag)
+library(dagitty)
+library(scico)
+library(here)
+
+theme_set(theme_bw(base_size = 15))
+
+here(".")
+
+here::i_am(
+  "./notebooks/meta_analysis.qmd"
+)
+```
+
+# Cats adoption 
+This is example from statistical rethinking walks through incorporating the censorship model in a survival analysis example. 
+
+## Research question 
+The "research" question at hand is does the population of "black" cats have a higher waiting time time to adoption relative to cat population with other fur colours  
+
+### Simulating TTE for black cats  
+
+```{r}
+cat_adopt <- function(day, prob) {
+  if (day > 1000) {
+    return(day)
+  }
+
+  if (runif(1) > prob) {
+    # keep waiting
+    day <- cat_adopt(day + 1, prob)
+  }
+
+  return(day)
+}
+
+
+sim_cats <- function(n = 10, probs = c(0.2, 0.8)) {
+  colour <- rep(NA, n)
+  days <- rep(NA, n)
+
+  for (i in 1:n) {
+    colour[i] <- sample(c(1, 2), size = 1, replace = TRUE, prob = probs)
+    days[i] <- cat_adopt(1, probs[colour[i]])
+  }
+
+  return(
+    tibble(
+      N = n,
+      days = days,
+      colour = colour,
+      adopted = rep(1, n)
+    )
+  )
+}
+
+synth_cats <- sim_cats(1000)
+```

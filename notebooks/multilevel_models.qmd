@@ -37,17 +37,12 @@ library(patchwork)
 library(ggdag)
 library(dagitty)
 library(scico)
+library(here)
 
 theme_set(theme_bw(base_size=15))
 
-root <- "/Users/devengokhale/Documents/GitHub/CausalInference"
-
-if (getwd() == root) {
-    fit_path <- "./fits"
-} else {
-    fit_path <- "../fits"
-}
-
+here("/Users/devengokhale/Documents/GitHub/CausalInference")
+here::i_am("/Users/devengokhale/Documents/GitHub/CausalInference/notebooks/multilevel_models_files.qmd")
 
 # extract data from the rethinking pacakge ---
 data(reedfrogs, package = "rethinking")
