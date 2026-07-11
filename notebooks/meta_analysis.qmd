@@ -15,7 +15,6 @@ editor: visual
 }
 ```
 
-
 ```{r}
 #| warning: false
 #| message: false
@@ -24,11 +23,19 @@ rm(list = ls())
 # packages ---
 library(dplyr)
 
+library(cmdstanr)
+cmdstan_path <- "C:/Users/gokhad01/.cmdstan/cmdstan-2.37.0"
+torsten_path <- "C:/Users/gokhad01/.torsten/cmdstan"
+
+
+set_cmdstan_path(path = cmdstan_path)
+
 library(brms)
 library(extraDistr, include.only = c("dhcauchy"))
 library(psych, include.only = "describe")
 library(tidyr, include.only = c("pivot_longer", "pivot_wider"))
 library(tibble, include.only = "tibble")
+library(purrr)
 
 library(ggplot2)
 library(patchwork)
@@ -46,15 +53,22 @@ here::i_am(
 )
 ```
 
-# Cats adoption 
-This is example from statistical rethinking walks through incorporating the censorship model in a survival analysis example. 
+# Cats adoption
 
-## Research question 
-The "research" question at hand is does the population of "black" cats have a higher waiting time time to adoption relative to cat population with other fur colours  
+This is example from statistical rethinking walks through incorporating the censorship model in a survival analysis example.
 
-### Simulating TTE for black cats  
+## Research question
 
-```{r}
+The "research" question at hand is does the population of "black" cats have a higher waiting time time to adoption relative to cat population with other fur colours
+
+### Simulating TTE for cats -- 
+
+This set of functions show how to simulate the time to an event, in this case "Adoption" of a cat of certain color. Theoretically, this event of the 1 succsess follwos a geormtric distribution whos pdf is given by the following expression -- $P(D_i|A = 1) = (1-p_C)^{(D_i - 1)}\times p_c$
+
+The actual generation of this geometric distribution can be realized as follows-- 
+
+```{r sim_tte_from_scratch}
+# function to calculate the days it takes to adopt a cat.
 cat_adopt <- function(day, prob) {
   if (day > 1000) {
     return(day)
@@ -68,13 +82,13 @@ cat_adopt <- function(day, prob) {
   return(day)
 }
 
-
-sim_cats <- function(n = 10, probs = c(0.2, 0.8)) {
+# simulate days until adoption --> There is no censoring in this data generation process.
+sim_cats1 <- function(n = 10, probs = c(0.1, 0.2)) {
   colour <- rep(NA, n)
   days <- rep(NA, n)
 
   for (i in 1:n) {
-    colour[i] <- sample(c(1, 2), size = 1, replace = TRUE, prob = probs)
+    colour[i] <- sample(c(1, 2), size = 1, replace = TRUE)
     days[i] <- cat_adopt(1, probs[colour[i]])
   }
 
@@ -88,5 +102,167 @@ sim_cats <- function(n = 10, probs = c(0.2, 0.8)) {
   )
 }
 
-synth_cats <- sim_cats(1000)
+set.seed(42)
+synth_cats <- sim_cats1(n = 1000)
+
+day0_pad <-
+  tibble(
+    N = 1000,
+    days = 0,
+    colour = c(1, 2),
+    total_adopted = 0,
+    prop_unadopted = 1
+  )
+
+synth_cats_data <- synth_cats |>
+  group_by(colour) |>
+  arrange(days) |>
+  mutate(
+    total_adopted = cumsum(adopted),
+    prop_unadopted = (n() - total_adopted) / n()
+  ) |>
+  ungroup() |>
+  bind_rows(day0_pad) |>
+  arrange(colour, days)
+
+
+# quick plot to visualize the survivorship
+synth_cats_data |>
+  ggplot(aes(x = days, y = prop_unadopted, colour = factor(colour))) +
+  geom_step(linewidth = 0.9) +
+  scale_colour_manual(
+    values = c("1" = "black", "2" = "steelblue"),
+    labels = c("1" = "black", "2" = "other")
+  ) +
+  labs(
+    x = "Time (Days)",
+    y = "Proportion un-adopted",
+    colour = "Fur colour",
+  ) +
+  scale_x_continuous(lim = c(0, 50), breaks = seq(0, 50, 10))
 ```
+
+### Simulating TTE for cats
+
+I am going to redo the step above using the `rgeom()` function in R. From the example above there are 517 black and 485 white cats in the generated sample above. I will keep that structure intact to overly the simulation realated variance on top of the synthetic survivorship of the population above.  
+
+```{r sim_tte_geometric}
+
+tte_cat_adop <- function(n = 517, prob = 0.1, colour = 1) {
+  # pad the result for better representation
+  # browser()
+  day0_pad <-
+    tibble(
+      N = n,
+      days = 0,
+      colour = colour,
+      total_adopted = 0,
+      prop_unadopted = 1
+    )
+
+  unadopted_survivorship <- tibble(
+    N = n,
+    days = rgeom(n, prob) + 1,
+    adopted = 1L,
+    colour = colour
+  ) |>
+    mutate(
+      total_adopted = cumsum(adopted),
+      prop_unadopted = (n - total_adopted) / n
+    ) |>
+    bind_rows(day0_pad) |>
+    arrange(days)
+  return(unadopted_survivorship)
+}
+
+sim_cats <- function(make_up_data) {
+  map_dfr(1:nrow(make_up_data), \(x) {
+    n <- make_up_data |> slice(x) |> pull(n)
+    prob <- make_up_data |> slice(x) |> pull(prob)
+    colour <- make_up_data |> slice(x) |> pull(colour)
+
+    return(tte_cat_adop(n, prob, colour))
+  })
+}
+
+tibble(
+  n = c(517, 485),
+  prob = c(0.1, 0.2),
+  colour = c(1, 2)
+) |>
+  sim_cats()
+```
+
+### Rumblings with Stan
+
+There is a type of syntax that I have seen pop up especially in some more advnaced models. I want to figure what these code do. 
+
+```{r stan_code_tutorial}
+
+b <- c(2, 0.75)
+
+# simulate some
+synth_data <- tibble(
+  x = rnorm(1e2),
+  y = rnorm(1e2, b[1] * exp(b[2] * x), 2.5)
+)
+
+synth_data |>
+  ggplot(aes(x, y)) +
+  geom_point(shape = 21)
+
+
+# priors
+priors <- (prior(normal(1, 2), nlpar = "b1") +
+  prior(normal(0, 2), nlpar = "b2") +
+  prior(exponential(0.1), class = "sigma"))
+
+
+# bayesain formula
+bf <- bf(y ~ b1 * exp(b2 * x), b1 + b2 ~ 1, nl = TRUE)
+
+
+# describing the model in terms of the brm formalizm
+mod1 <- brm(
+  formula = bf,
+  prior = priors,
+  data = synth_data,
+  family = gaussian(),
+  cores = 4,
+  seed = 42,
+  backend = "cmdstanr"
+)
+
+# what do the posterior as ---
+
+summary(mod1)
+
+pp_check(mod1)
+
+# posterior predictive checks
+mod1_post_df <- as_draws_df(mod1)
+
+x_grid <- seq(min(synth_data$x), max(synth_data$x), length.out = 100)
+
+curve_df <- mod1_post_df |>
+  slice(1:30) |>
+  mutate(.draw = row_number()) |>
+  reframe(
+    x = x_grid,
+    y_hat = b_b1_Intercept * exp(b_b2_Intercept * x),
+    .by = .draw
+  )
+
+synth_data |>
+  ggplot(aes(x, y)) +
+  geom_point(shape = 21) +
+  geom_line(
+    data = curve_df,
+    aes(x = x, y = y_hat, group = .draw),
+    colour = "#D55E00",
+    linewidth = 0.1
+  ) +
+  labs(x = "x", y = "y", title = "Posterior predictive curves (30 draws)")
+```
+
+

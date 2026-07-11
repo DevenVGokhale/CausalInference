@@ -102,9 +102,9 @@ bangla_sum
 
 According to the lecture, contraceptive use can be explained through a complex pathway of connections between the variables in the datset. The plan here
 
--   Draw the full DAG
--   Explaing the possible relationships
--   Then start building from Ground-up, iteratively making the model more complex.
+- Draw the full DAG
+- Explaing the possible relationships
+- Then start building from Ground-up, iteratively making the model more complex.
 
 In the DAG, the contraceptive use (*C*) is influenced all the other covariates *viz.,* district of origin (*D*), Number of children (*K)*, Age of the woman (*A*) and Urbanicity of the district (*U*). Further, relationships can be described among the covariates *eg., U and A and can together influence K. Similarly, D can cause U.*
 
@@ -133,10 +133,10 @@ ggdag(full_model_dag, layout = "circle") +
 
 Tackling the whole DAG is a bit daunting. These are going to be my subsequesnt steps ---
 
--   Add **varying effects** for district
--   Add Urbanacity as a covariate to control for rural/urban divide
--   Produce some predictions for both these steps
--   Convince yourself that the the data actually moves the prior around
+- Add **varying effects** for district
+- Add Urbanacity as a covariate to control for rural/urban divide
+- Produce some predictions for both these steps
+- Convince yourself that the the data actually moves the prior around
 
 ## Multi-level model with **District (D)** as a varying effect
 
@@ -212,15 +212,13 @@ ggdag(veff_dag, layout = "circle") +
 
 Starting with the model with random intercept. The outcome of interest contraceptive use (C) is a binary variable. For the first iteration of the model, therefore, the model is going to be --
 
-$$
-\begin{aligned}    
+$$\begin{aligned}    
     C_i &\sim \text{Bernoulli}(p_i)\\
     \operatorname{logit}(p_i) &= α_{D[i]}\\
     α_{D} &\sim \text{Normal}(\bar{α},σ)\\
     \bar{a} &\sim \text{StudentT}(3,0,2.5)\\
     σ &\sim \text{Half-Cauchy}(0,1)\\
-\end{aligned}
-$$
+\end{aligned}$$
 
 Defining the multilevel model here. Since most of this material is from the Statistical rethinking chapter 13, I am adjusting the nomenclature accordingly.
 
@@ -295,14 +293,12 @@ bm13.0 <- add_criterion(bm13.0, "waic")
 
 ```
 
-For the sake of completion I am alsoe going to define a fixed effects model here. Meaning, there is a fixed intercept for every district. The model thus becomes -- 
-$$
-\begin{aligned}    
+For the sake of completion I am alsoe going to define a fixed effects model here. Meaning, there is a fixed intercept for every district. The model thus becomes --
+$$\begin{aligned}    
     C_i &\sim \text{Bernoulli}(p_i)\\
     \operatorname{logit}(p_i) &= α_{D[i]}\\
     α_{D} &\sim \text{StudentT}(3,0,2.5)\\
-\end{aligned}
-$$
+\end{aligned}$$
 
 ```{r bm13.0.1}
 #| warning: false
