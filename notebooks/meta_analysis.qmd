@@ -21,33 +21,45 @@ editor: visual
 rm(list = ls())
 
 # packages ---
-library(dplyr)
+# system operations
+library(here)
+library(fs)
 
+# inference ---
 library(cmdstanr)
+# setting-up stan
 cmdstan_path <- "C:/Users/gokhad01/.cmdstan/cmdstan-2.37.0"
 torsten_path <- "C:/Users/gokhad01/.torsten/cmdstan"
 
-
 set_cmdstan_path(path = cmdstan_path)
+# set up directories to store stan files
 
 library(brms)
+library(posterior)
+library(tidybayes)
+
+# data wrangling
+library(dplyr)
 library(extraDistr, include.only = c("dhcauchy"))
 library(psych, include.only = "describe")
 library(tidyr, include.only = c("pivot_longer", "pivot_wider"))
 library(tibble, include.only = "tibble")
 library(purrr)
 
+# plotting
 library(ggplot2)
+library(ggdist)
 library(patchwork)
-library(ggdag)
 library(dagitty)
+library(ggdag)
 library(scico)
-library(here)
 
+
+# set up tghe plotting theme
 theme_set(theme_bw(base_size = 15))
 
+# establish the project paths
 here(".")
-
 here::i_am(
   "./notebooks/meta_analysis.qmd"
 )
@@ -263,6 +275,87 @@ synth_data |>
     linewidth = 0.1
   ) +
   labs(x = "x", y = "y", title = "Posterior predictive curves (30 draws)")
+
+
+# want to see how the stan code looks based on the brms pacakge --
+stancode(mod1)
+
+
+# look  at the draws dataframe
+mod1 |> print()
+
+posterior_summary(mod1)
+
+as_draws_df(mod1) |> glimpse()
 ```
 
 
+
+```{r, rewriting_model_in_stan_v1}
+
+# using compose data
+stan_data <- synth_data |>
+  compose_data()
+
+# compile the stan model
+cmd_mod11 <- cmdstan_model("notebooks/mod11.stan")
+
+cmd_mod11_fit <- cmd_mod11$sample(
+  data = stan_data,
+  chains = 4,
+  seed = 42
+)
+
+print(cmd_mod11_fit)
+```
+
+```{r, rewriting_model_in_stan_v2}
+
+# compile the stan model
+cmd_mod12 <- cmdstan_model("notebooks/mod12.stan")
+
+cmd_mod12_fit <- cmd_mod12$sample(
+  data = stan_data,
+  chains = 4,
+  seed = 42
+)
+
+print(cmd_mod12_fit)
+```
+
+
+### Mixture Beta distribution 
+
+#### Generate data 
+
+```{r sim_beta_mixture}
+
+n <- 1000
+
+sim_mix_beta <- function(
+  n,
+  prob = c(0.1, 0.8, 0.1),
+  alpha = 1,
+  beta = 5
+) {
+  # browser()
+  # generate distribution of the componenent
+  component <- sample(x = c(1, 2, 3), size = n, replace = TRUE, prob = prob)
+  beta_draw <- rbeta(n, alpha, beta)
+  # simulate from the mixture model
+  mixture_sample <- case_when(
+    component == 1 ~ 0,
+    component == 3 ~ 1,
+    TRUE ~ beta_draw
+  )
+
+  return(list(component, mixture_sample))
+}
+
+set.seed(42)
+sim_mix_beta(100)
+
+# tibble(
+#   x = rnorm(n)
+# )
+```
