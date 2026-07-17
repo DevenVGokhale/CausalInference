@@ -359,3 +359,67 @@ sim_mix_beta(100)
 #   x = rnorm(n)
 # )
 ```
+
+
+
+### Simulating a HMM
+
+Trying to play around some of the models that center around simulating adverse events -- I am assuming the probabilities of transition don't change... However, I assume that that once you are in state 2, it becomes becomes diffcult to get out of it.  
+
+
+```{r}
+
+T <- 365
+K <- 2
+
+# times for later
+times <- 1:T
+
+# currently assuming a very simple transition matrix
+transition_matrix <- matrix(
+  c(0.2, 0.8, 0.3, 0.7),
+  byrow = TRUE,
+  nrow = K
+)
+
+# average ae incidence
+lambda <- c(2.1, 9.7)
+# initializing the system
+current_state <- c(1, rep(NA, times = T - 1))
+emissions <- rep(NA, times = T)
+
+# simulate the hmm
+for (t in 2:T) {
+  #  sample from the latent state distribution
+  # browser()
+  current_state[t] <- sample(
+    x = 1:K,
+    size = 1,
+    prob = transition_matrix[current_state[(t - 1)], ],
+    replace = TRUE
+  )
+  #  generate emissions
+  emissions[t] <- rpois(1, lambda[current_state[t]])
+}
+
+plot_simulations <- tibble(
+  times = times,
+  latent_state = as.factor(current_state),
+  adverse_events = emissions
+)
+
+# plotting the process
+plot_simulations |>
+  ggplot(aes(
+    x = times,
+    y = adverse_events,
+    colour = latent_state
+  )) +
+  geom_point(size = 4) +
+  labs(
+    x = "Time (Days)",
+    y = "Adverse Events",
+    colour = "Latent\nState"
+  ) +
+  theme(legend.position = "bottom")
+```
