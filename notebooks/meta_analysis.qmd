@@ -53,6 +53,7 @@ library(patchwork)
 library(dagitty)
 library(ggdag)
 library(scico)
+library(assertthat)
 
 
 # set up tghe plotting theme
@@ -73,11 +74,11 @@ This is example from statistical rethinking walks through incorporating the cens
 
 The "research" question at hand is does the population of "black" cats have a higher waiting time time to adoption relative to cat population with other fur colours
 
-### Simulating TTE for cats -- 
+### Simulating TTE for cats --
 
 This set of functions show how to simulate the time to an event, in this case "Adoption" of a cat of certain color. Theoretically, this event of the 1 succsess follwos a geormtric distribution whos pdf is given by the following expression -- $P(D_i|A = 1) = (1-p_C)^{(D_i - 1)}\times p_c$
 
-The actual generation of this geometric distribution can be realized as follows-- 
+The actual generation of this geometric distribution can be realized as follows--
 
 ```{r sim_tte_from_scratch}
 # function to calculate the days it takes to adopt a cat.
@@ -156,7 +157,7 @@ synth_cats_data |>
 
 ### Simulating TTE for cats
 
-I am going to redo the step above using the `rgeom()` function in R. From the example above there are 517 black and 485 white cats in the generated sample above. I will keep that structure intact to overly the simulation realated variance on top of the synthetic survivorship of the population above.  
+I am going to redo the step above using the `rgeom()` function in R. From the example above there are 517 black and 485 white cats in the generated sample above. I will keep that structure intact to overly the simulation realated variance on top of the synthetic survivorship of the population above.
 
 ```{r sim_tte_geometric}
 
@@ -207,7 +208,7 @@ tibble(
 
 ### Rumblings with Stan
 
-There is a type of syntax that I have seen pop up especially in some more advnaced models. I want to figure what these code do. 
+There is a type of syntax that I have seen pop up especially in some more advnaced models. I want to figure what these code do.
 
 ```{r stan_code_tutorial}
 
@@ -289,8 +290,6 @@ posterior_summary(mod1)
 as_draws_df(mod1) |> glimpse()
 ```
 
-
-
 ```{r, rewriting_model_in_stan_v1}
 
 # using compose data
@@ -323,10 +322,9 @@ cmd_mod12_fit <- cmd_mod12$sample(
 print(cmd_mod12_fit)
 ```
 
+### Mixture Beta distribution
 
-### Mixture Beta distribution 
-
-#### Generate data 
+#### Generate data
 
 ```{r sim_beta_mixture}
 
@@ -358,182 +356,4 @@ sim_mix_beta(100)
 # tibble(
 #   x = rnorm(n)
 # )
-```
-
-
-
-### Simulating a HMM
-
-#### Constant transition probabilities 
-
-Trying to play around some of the models that center around simulating adverse events -- I am assuming the probabilities of transition don't change... However, I assume that that once you are in state 2, it becomes becomes diffcult to get out of it.  
-
-
-```{r, hmm_first_pass}
-# setting up constants of integration
-T <- 365
-K <- 2
-
-# times for later
-times <- 1:T
-
-# currently assuming a very simple transition matrix
-transition_matrix <- matrix(
-  c(0.2, 0.8, 0.3, 0.7),
-  byrow = TRUE,
-  nrow = K
-)
-
-# average ae incidence
-lambda <- c(2.1, 9.7)
-# initializing the system
-current_state <- c(1, rep(NA, times = T - 1))
-emissions <- rep(NA, times = T)
-
-# simulate the hmm
-for (t in 2:T) {
-  #  sample from the latent state distribution
-  # browser()
-  current_state[t] <- sample(
-    x = 1:K,
-    size = 1,
-    prob = transition_matrix[current_state[(t - 1)], ],
-    replace = TRUE
-  )
-  #  generate emissions
-  emissions[t] <- rpois(1, lambda[current_state[t]])
-}
-
-plot_simulations <- tibble(
-  times = times,
-  latent_state = as.factor(current_state),
-  adverse_events = emissions
-)
-
-# plotting the process
-plot_simulations |>
-  ggplot(aes(
-    x = times,
-    y = adverse_events,
-    colour = latent_state
-  )) +
-  geom_point(size = 3) +
-  labs(
-    x = "Time (Days)",
-    y = "Adverse Events",
-    colour = "Latent\nState"
-  ) +
-  theme(legend.position = "bottom")
-```
-
-
-#### Time varying transition probabilities 
-
-
-```{r hmm_forced_transition}
-
-# setting up constants of integration
-T <- 365
-K <- 2
-
-# times for later
-times <- 1:T
-
-# this function will assign the
-get_transition <- function(p12) {
-  transition_matrix <- matrix(
-    c((1 - p12), p12, 0.05, 0.95),
-    byrow = TRUE,
-    nrow = K
-  )
-  return(transition_matrix)
-}
-
-# introducing time varying effects
-Cavg <- (1.5 - cos(2 * pi * times / T))
-# generate the time series of transition probabilities
-# beta0=-3.5, beta1=1.0 gives:
-#   trough (Cavg~0.5): p12 ≈ 0.05 → mean sojourn state 1 ~21 days
-#   peak   (Cavg~2.5): p12 ≈ 0.27 → mean sojourn state 1 ~4 days
-cal_p12 <- function(Cavg, beta0 = -3.5, beta1 = 1.0) {
-  logit_p12 <- beta0 + beta1 * Cavg
-  return(inv_logit_scaled(logit_p12))
-}
-
-p12 <- cal_p12(Cavg)
-
-# average ae incidence
-lambda <- c(2.1, 9.7)
-# initializing the system
-current_state <- c(1, rep(NA, times = T - 1))
-emissions <- rep(NA, times = T)
-
-
-# simulate the hmm
-for (t in 2:T) {
-  #  sample from the latent state distribution
-  # browser()
-  # current transition matrix
-  current_transition_matrix <- get_transition(p12[t - 1])
-  current_state[t] <- sample(
-    x = 1:K,
-    size = 1,
-    prob = current_transition_matrix[current_state[(t - 1)], ],
-    replace = TRUE
-  )
-  #  generate emissions
-  emissions[t] <- rpois(1, lambda[current_state[t]])
-}
-
-
-plot_simulations <- tibble(
-  times = times,
-  latent_state = as.factor(current_state),
-  adverse_events = emissions
-)
-
-# plotting the process
-plot_simulations |>
-  ggplot(aes(
-    x = times,
-    y = adverse_events,
-    colour = latent_state
-  )) +
-  geom_point(size = 3) +
-  labs(
-    x = "Time (Days)",
-    y = "Adverse Events",
-    colour = "Latent\nState"
-  ) +
-  theme(legend.position = "bottom")
-
-# rolling mean state vs rescaled Cavg
-plot_simulations |>
-  mutate(
-    state_numeric = as.integer(latent_state),
-    rolling_state = slider::slide_dbl(
-      state_numeric,
-      mean,
-      .before = 14,
-      .after = 14
-    )
-  ) |>
-  ggplot(aes(x = times)) +
-  geom_step(
-    aes(y = state_numeric),
-    colour = "grey70",
-    linewidth = 0.4,
-    alpha = 0.6
-  ) +
-  geom_line(aes(y = rolling_state), colour = "steelblue", linewidth = 1) +
-  geom_line(
-    aes(y = scales::rescale(Cavg, to = c(1, 2))),
-    colour = "firebrick",
-    linetype = "dashed",
-    linewidth = 1
-  ) +
-  labs(
-    x = "Time (Days)",
-    y = "State / Rolling mean (blue) / rescaled Cavg (red)"
-  )
 ```

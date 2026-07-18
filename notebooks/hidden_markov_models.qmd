@@ -1,0 +1,426 @@
+---
+title: "Hidden markov models"
+author: "Deven Gokhale"
+format: 
+  html:
+    theme: sketchy
+    code-fold: true
+editor: visual
+---
+
+```{r load_libraries}
+#| warning: false
+#| message: false
+rm(list = ls())
+set.seed(42)
+
+# packages ---
+# system operations
+library(here)
+library(fs)
+
+# inference and simulation ---
+library(cmdstanr)
+# setting-up stan
+cmdstan_path <- "C:/Users/gokhad01/.cmdstan/cmdstan-2.37.0"
+torsten_path <- "C:/Users/gokhad01/.torsten/cmdstan"
+
+set_cmdstan_path(path = cmdstan_path)
+# set up directories to store stan files
+
+library(brms)
+library(posterior)
+library(tidybayes)
+library(mrgsolve)
+
+# data wrangling
+library(dplyr)
+library(extraDistr, include.only = c("dhcauchy"))
+library(psych, include.only = "describe")
+library(tidyr, include.only = c("pivot_longer", "pivot_wider"))
+library(tibble, include.only = "tibble")
+library(purrr)
+
+# plotting
+library(ggplot2)
+library(ggdist)
+library(patchwork)
+library(dagitty)
+library(ggdag)
+library(scico)
+library(assertthat)
+
+
+# set up tghe plotting theme
+theme_set(theme_bw(base_size = 15))
+
+# establish the project paths
+here(".")
+here::i_am(
+  "./notebooks/hidden_markov_models.qmd"
+)
+```
+
+
+```{css notebook_appearance, echo: false}
+.cell-output-stdout {
+  max-height: 500px;  
+  overflow-y: auto;
+}
+```
+
+```{r, utility_functions}
+
+# this function generates transition probability for 1 --> 2 given some covariates.
+cal_p12 <- function(Cavg, beta0 = -5.1, beta1 = 1.0) {
+  logit_p12 <- beta0 + beta1 * Cavg
+  return(inv_logit_scaled(logit_p12))
+}
+
+# this function will assign the
+get_transition <- function(p12) {
+  # check the input data
+  assert_that(is.numeric(p12))
+  assert_that(p12 <= 1)
+
+  transition_matrix <- matrix(
+    c((1 - p12), p12, 0.05, 0.95),
+    byrow = TRUE,
+    nrow = K
+  )
+  return(transition_matrix)
+}
+
+# this function produces the panel of the hidden states and emmissions together with
+# the behavior of the dependent variable.
+plot_sim_panels <- function(sim_data) {
+  # browser()
+  # check that data before using it
+  assert_that(is.data.frame(sim_data))
+  assert_that(
+    sum(
+      c("times", "latent_state", "adverse_events", "Cavg") %in%
+        names(sim_data)
+    ) ==
+      4
+  )
+
+  # plot the emissions
+  emissions_plot <- sim_data |>
+    ggplot(aes(
+      x = times,
+      y = adverse_events,
+      colour = latent_state
+    )) +
+    geom_point(size = 3) +
+    labs(
+      x = "Time (Days)",
+      y = "Adverse Events",
+      colour = "Latent\nState"
+    )
+
+  # plot hidden states as a function of the time varying covariate
+  hidden_states_plot <- sim_data |>
+    mutate(
+      state_numeric = as.integer(latent_state),
+      rolling_state = slider::slide_dbl(
+        state_numeric,
+        mean,
+        .before = 10,
+        .after = 10
+      )
+    ) |>
+    ggplot(aes(x = times)) +
+    geom_step(
+      aes(y = state_numeric, colour = "Latent state"),
+      linewidth = 0.4,
+      alpha = 0.6
+    ) +
+    geom_line(aes(y = rolling_state, colour = "Rolling mean"), linewidth = 1) +
+    geom_line(
+      aes(
+        y = (Cavg - min(Cavg)) / (max(Cavg) - min(Cavg)) + 1,
+        colour = "Cavg"
+      ),
+      linetype = "dashed",
+      linewidth = 1
+    ) +
+    scale_colour_manual(
+      name = NULL,
+      values = c(
+        "Latent state" = "grey70",
+        "Rolling mean" = "steelblue",
+        "Cavg" = "firebrick"
+      )
+    ) +
+    scale_y_continuous(
+      name = "Latent state / rolling mean",
+      limits = c(1, 2),
+      sec.axis = sec_axis(
+        transform = ~ (. - 1) * (max(Cavg) - min(Cavg)) + min(Cavg),
+        name = "Cavg"
+      )
+    ) +
+    labs(x = "Time (Days)") +
+    theme(legend.position = "bottom")
+
+  # putting it all together
+  emissions_plot /
+    hidden_states_plot +
+    plot_layout(guides = "collect") &
+    theme(legend.position = "bottom") &
+    guides(colour = guide_legend(nrow = 2))
+}
+```
+### Simulating a Hidden markov model
+
+# Simulation 
+
+I am going to write models that that will become progressively more complex. Here I am trying to model a relationship between exposure of a drug and the incendence of adverse events. 
+
+### Quick summary of the model 
+
+Here, I assume a two, hidden states model that scafolds the risk structure associated with being "exposed". Lets say **state 1** is the "low risk" group and **state 2** is the "high risk" group. The main difference here being that the high risk group emits appreciably higher average number of the "adeverse events" than the lower risk group. The over all dynamic structire of this model is decribed in the flow diagram below. 
+
+<!-- Insert diagram here --> 
+
+
+
+
+## Constant transition probabilities 
+
+Trying to play around some of the models that center around simulating adverse events -- I am assuming the probabilities of transition don't change... However, I assume that that once you are in state 2, it becomes becomes diffcult to get out of it.  
+
+
+```{r, hmm_first_pass}
+# setting up constants of integration
+T <- 365
+K <- 2
+
+# times for later
+times <- 1:T
+
+# currently assuming a very simple transition matrix
+transition_matrix <- matrix(
+  c(0.2, 0.8, 0.3, 0.7),
+  byrow = TRUE,
+  nrow = K
+)
+
+# average ae incidence
+lambda <- c(2.1, 9.7)
+# initializing the system
+current_state <- c(1, rep(NA, times = T - 1))
+emissions <- rep(NA, times = T)
+
+# simulate the hmm
+for (t in 2:T) {
+  #  sample from the latent state distribution
+  # browser()
+  current_state[t] <- sample(
+    x = 1:K,
+    size = 1,
+    prob = transition_matrix[current_state[(t - 1)], ],
+    replace = TRUE
+  )
+  #  generate emissions
+  emissions[t] <- rpois(1, lambda[current_state[t]])
+}
+
+plot_simulations <- tibble(
+  times = times,
+  latent_state = as.factor(current_state),
+  adverse_events = emissions
+)
+
+# plotting the process
+plot_simulations |>
+  ggplot(aes(
+    x = times,
+    y = adverse_events,
+    colour = latent_state
+  )) +
+  geom_point(size = 3) +
+  labs(
+    x = "Time (Days)",
+    y = "Adverse Events",
+    colour = "Latent\nState"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+
+## Time varying transition probabilities 
+
+### $C_{\text{avg}}$ has temporal dynamics
+#### Cosine 
+```{r hmm_forced_transition_sine}
+#| fig-height: 8
+#| fig-width: 9
+
+# setting up constants of integration
+T <- 365
+K <- 2
+
+# times for later
+times <- 1:T
+
+
+# introducing time varying effects
+Cavg <- (1.5 - cos(2 * pi * times / T))
+
+p12 <- cal_p12(Cavg)
+
+# average ae incidence
+lambda <- c(2.1, 9.7)
+# initializing the system
+current_state <- c(1, rep(NA, times = T - 1))
+emissions <- rep(NA, times = T)
+
+
+# simulate the hmm
+for (t in 2:T) {
+  #  sample from the latent state distribution
+  # browser()
+  # current transition matrix
+  current_transition_matrix <- get_transition(p12[t - 1])
+  current_state[t] <- sample(
+    x = 1:K,
+    size = 1,
+    prob = current_transition_matrix[current_state[(t - 1)], ],
+    replace = TRUE
+  )
+  #  generate emissions
+  emissions[t] <- rpois(1, lambda[current_state[t]])
+}
+
+
+plot_simulations <- tibble(
+  times = times,
+  latent_state = as.factor(current_state),
+  adverse_events = emissions,
+  Cavg = Cavg
+)
+
+
+plot_sim_panels(plot_simulations)
+```
+
+#### 2 compartment PK-model
+
+I am goint to simulate from a 2cmt PK model with linear absorption. 
+<!-- Insert figure here -->
+
+```{r pk_model}
+#| warning: false
+#| message: false
+#| fig-width: 8
+#| fig-cap: "Two-Compartment PK: 50 mg \u2192 100 mg at Week 24 (Every 4 Weeks Dosing)"
+
+# define two-compartment model
+code <- '
+$PARAM CL = 0.3, V1 = 10, Q = 2, V2 = 25, KA = 0.4
+
+$CMT DEPOT CENTRAL PERIPH
+
+$ODE
+dxdt_DEPOT   = -KA * DEPOT;
+dxdt_CENTRAL =  KA * DEPOT - (CL/V1 + Q/V1) * CENTRAL + (Q/V2) * PERIPH;
+dxdt_PERIPH  =  (Q/V1) * CENTRAL - (Q/V2) * PERIPH;
+
+$TABLE
+double CP = CENTRAL / V1;
+
+$CAPTURE CP
+'
+
+mod <- mcode("two_cmt", code)
+
+# dosing events: weekly (ii = 168 hrs)
+# weeks 1-23: 50 mg (23 doses), weeks 24-52: 100 mg (29 doses)
+doses_low <- ev(amt = 50, ii = 168, addl = 22, time = 0, cmt = 1)
+doses_high <- ev(amt = 100, ii = 168, addl = 28, time = 23 * 168, cmt = 1)
+
+dosing <- c(doses_low, doses_high)
+
+# simulate over 52 weeks with hourly output
+sim_pk <- mod |>
+  ev(dosing) |>
+  mrgsim(end = 52 * 168, delta = 1) |>
+  as_tibble() |>
+  mutate(day = floor(time / 24)) |>
+  mutate(Cavg = mean(CP), .by = day)
+
+# produce the simulation
+head(sim_pk)
+
+# plot daily Cavg
+sim_pk |>
+  ggplot(aes(x = time / 24, y = Cavg)) +
+  geom_line(colour = "steelblue", linewidth = 0.8) +
+  geom_vline(
+    xintercept = 168,
+    linetype = "dashed",
+    colour = "firebrick",
+    linewidth = 0.7
+  ) +
+  annotate(
+    "text",
+    x = 168,
+    y = max(sim_pk$Cavg) * 0.9,
+    label = "Dose escalation\n50 \u2192 100 mg",
+    hjust = 0,
+    colour = "firebrick",
+    size = 3.5
+  ) +
+  labs(
+    x = "Time (days)",
+    y = "Daily Cavg (mg/L)",
+    title = "Two-Compartment PK: Daily Cavg, 50 mg \u2192 100 mg at Week 24 (Weekly Dosing)"
+  )
+```
+
+Now resimulate the satates and emmsions with this new $C_{\text{avg}}$ time-series.
+
+```{r hmm_cmt_pk_forcing}
+#| fig-height: 8
+#| fig-width: 9
+
+# extract one daily Cavg from the PK sim (days 1-365)
+pk_daily <- sim_pk |>
+  distinct(day, Cavg) |>
+  filter(day >= 0, day <= T - 1) |>
+  arrange(day)
+
+Cavg <- pk_daily$Cavg
+
+p12 <- cal_p12(Cavg)
+
+# average ae incidence (same as cosine scenario)
+lambda <- c(2.1, 9.7)
+
+# initialise
+current_state <- c(1, rep(NA, times = T - 1))
+emissions <- rep(NA, times = T)
+
+# simulate the hmm
+for (t in 2:T) {
+  current_transition_matrix <- get_transition(p12[t - 1])
+  current_state[t] <- sample(
+    x = 1:K,
+    size = 1,
+    prob = current_transition_matrix[current_state[(t - 1)], ],
+    replace = TRUE
+  )
+  emissions[t] <- rpois(1, lambda[current_state[t]])
+}
+
+plot_simulations <- tibble(
+  times = times,
+  latent_state = as.factor(current_state),
+  adverse_events = emissions,
+  Cavg = Cavg
+)
+
+plot_sim_panels(plot_simulations)
+```
