@@ -32,6 +32,7 @@ library(brms)
 library(posterior)
 library(tidybayes)
 library(mrgsolve)
+library("Rcpp")
 
 # data wrangling
 library(dplyr)
@@ -90,6 +91,10 @@ get_transition <- function(p12) {
   )
   return(transition_matrix)
 }
+
+# this function simulates the hidden markov process
+# the source is writtenin Rcpp to reduce computational bottlenecks when dealing
+# random effects simulations
 
 # this function produces the panel of the hidden states and emmissions together with
 # the behavior of the dependent variable.
