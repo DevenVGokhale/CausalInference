@@ -1,6 +1,6 @@
 {
   "R": {
-    "Version": "4.5.2",
+    "Version": "4.5.0",
     "Repositories": [
       {
         "Name": "CRAN",
@@ -2360,7 +2360,7 @@
     },
     "ggstats": {
       "Package": "ggstats",
-      "Version": "0.13.0",
+      "Version": "0.11.0",
       "Source": "Repository",
       "Type": "Package",
       "Title": "Extension to 'ggplot2' for Plotting Stats",
@@ -2408,7 +2408,7 @@
         "vdiffr"
       ],
       "Encoding": "UTF-8",
-      "RoxygenNote": "7.3.3",
+      "RoxygenNote": "7.3.2",
       "Config/testthat/edition": "3",
       "Language": "en-US",
       "VignetteBuilder": "knitr",

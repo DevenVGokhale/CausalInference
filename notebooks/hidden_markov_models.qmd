@@ -22,8 +22,13 @@ library(fs)
 # inference and simulation ---
 library(cmdstanr)
 # setting-up stan
-cmdstan_path <- "C:/Users/gokhad01/.cmdstan/cmdstan-2.37.0"
-torsten_path <- "C:/Users/gokhad01/.torsten/cmdstan"
+if (.Platform$OS.type == "windows") {
+  cmdstan_path <- "C:/Users/gokhad01/.cmdstan/cmdstan-2.37.0"
+  torsten_path <- "C:/Users/gokhad01/.torsten/cmdstan"
+} else {
+  cmdstan_path <- "~/.cmdstan/cmdstan-2.37.0"
+  torsten_path <- "~/.torsten/cmdstan"
+}
 
 set_cmdstan_path(path = cmdstan_path)
 # set up directories to store stan files
@@ -32,7 +37,10 @@ library(brms)
 library(posterior)
 library(tidybayes)
 library(mrgsolve)
-library("Rcpp")
+library(Rcpp)
+# setting-up
+path("rcpp", "hmm")
+
 
 # data wrangling
 library(dplyr)
@@ -61,7 +69,6 @@ here::i_am(
   "./notebooks/hidden_markov_models.qmd"
 )
 ```
-
 
 ```{css notebook_appearance, echo: false}
 .cell-output-stdout {
@@ -177,25 +184,22 @@ plot_sim_panels <- function(sim_data) {
     guides(colour = guide_legend(nrow = 2))
 }
 ```
+
 ### Simulating a Hidden markov model
 
-# Simulation 
+# Simulation
 
-I am going to write models that that will become progressively more complex. Here I am trying to model a relationship between exposure of a drug and the incendence of adverse events. 
+I am going to write models that that will become progressively more complex. Here I am trying to model a relationship between exposure of a drug and the incendence of adverse events.
 
-### Quick summary of the model 
+### Quick summary of the model
 
-Here, I assume a two, hidden states model that scafolds the risk structure associated with being "exposed". Lets say **state 1** is the "low risk" group and **state 2** is the "high risk" group. The main difference here being that the high risk group emits appreciably higher average number of the "adeverse events" than the lower risk group. The over all dynamic structire of this model is decribed in the flow diagram below. 
+Here, I assume a two, hidden states model that scafolds the risk structure associated with being "exposed". Lets say **state 1** is the "low risk" group and **state 2** is the "high risk" group. The main difference here being that the high risk group emits appreciably higher average number of the "adeverse events" than the lower risk group. The over all dynamic structire of this model is decribed in the flow diagram below.
 
-<!-- Insert diagram here --> 
+<!-- Insert diagram here -->
 
+## Constant transition probabilities
 
-
-
-## Constant transition probabilities 
-
-Trying to play around some of the models that center around simulating adverse events -- I am assuming the probabilities of transition don't change... However, I assume that that once you are in state 2, it becomes becomes diffcult to get out of it.  
-
+Trying to play around some of the models that center around simulating adverse events -- I am assuming the probabilities of transition don't change... However, I assume that that once you are in state 2, it becomes becomes diffcult to get out of it.
 
 ```{r, hmm_first_pass}
 # setting up constants of integration
@@ -254,11 +258,12 @@ plot_simulations |>
   theme(legend.position = "bottom")
 ```
 
-
-## Time varying transition probabilities 
+## Time varying transition probabilities
 
 ### $C_{\text{avg}}$ has temporal dynamics
-#### Cosine 
+
+#### Cosine
+
 ```{r hmm_forced_transition_sine}
 #| fig-height: 8
 #| fig-width: 9
@@ -313,8 +318,7 @@ plot_sim_panels(plot_simulations)
 
 #### 2 compartment PK-model
 
-I am goint to simulate from a 2cmt PK model with linear absorption. 
-<!-- Insert figure here -->
+I am goint to simulate from a 2cmt PK model with linear absorption. <!-- Insert figure here -->
 
 ```{r pk_model}
 #| warning: false
